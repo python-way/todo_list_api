@@ -21,10 +21,12 @@ class Todo(Base):
     id = Column(Integer, primary_key=True)
     title = Column(String(200), nullable=False)
     description = Column(String(1000))
+    owner = Column(String(120))
 
-    def __init__(self, title, description):
+    def __init__(self, title, description, owner):
         self.title = title
         self.description = description
+        self.owner = owner
 
     def __repr__(self):
         return f"<Todo {self.title!r}>"

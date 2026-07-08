@@ -2,13 +2,47 @@ from todo_api import app
 from todo_api.database import db_session
 from todo_api.models import User, Todo
 
-
 from flask import jsonify, request
-from werkzeug.security import generate_password_hash, check_password_hash
 
-@app.route("/")
-def home():
-    return "HELLO WORLD!"
+from werkzeug.security import generate_password_hash, check_password_hash
+from functools import wraps
+import jwt
+import datetime
+
+app.config['SECRET_KEY'] = 'your_secret_key_here'
+
+
+## Authentication
+def token_required(f):
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        token = None
+
+        # JWT is expected in the Authorization header
+        if 'Authorization' in request.headers:
+            auth_header = request.headers['Authorization']
+            if auth_header.startswith("Bearer "):
+                token = auth_header.split(" ")[1]
+
+        if not token:
+            return jsonify({'message': 'Unauthorized'}), 401
+
+        try:
+            data = jwt.decode(token, app.config['SECRET_KEY'], algorithms=["HS256"])
+            current_user = data['email']
+        except jwt.ExpiredSignatureError:
+            return jsonify({'message': 'Token has expired!'}), 401
+        except jwt.InvalidTokenError:
+            return jsonify({'message': 'Invalid token!'}), 401
+
+        return f(current_user, *args, **kwargs)
+    return decorated
+
+@app.route('/', methods=['GET'])
+@token_required
+def protected(current_user):
+    return jsonify({'message': f'Hello {current_user}, you have access to this route!'})
+
 
 @app.route("/register", methods=["POST"])
 def register_user():
@@ -28,9 +62,14 @@ def register_user():
     db_session.add(new_user)
     db_session.commit()
 
-    return jsonify({'message': 'User registered successfully', 'username':new_user.name, 'email':new_user.email}), 200
+    token = jwt.encode({
+        'email': new_user.email,
+        'exp': datetime.datetime.utcnow() + datetime.timedelta(minutes=30)
+    }, app.config['SECRET_KEY'], algorithm="HS256")
 
-    
+    return jsonify({'token': token})
+
+
 @app.route("/login", methods=["POST"])
 def login():
     data = request.get_json()
@@ -41,30 +80,36 @@ def login():
         return jsonify({'message': 'email and password are required'}), 400
 
     user = User.query.filter_by(email=email).first()
-    if user:
-        if check_password_hash(user.password, password):
-            return jsonify({'massage': 'Logged in successfully'}), 200
-        else:
-            return jsonify({'message': "Wrong password"}), 400
-    else:
-        return jsonify({'User does not exist'}), 400
+    if not user or not check_password_hash(user.password, password):
+        return jsonify({'message': 'Invalid credentials'}), 401
+
+
+    token = jwt.encode({
+        'email': user.email,
+        'exp': datetime.datetime.utcnow() + datetime.timedelta(minutes=30)
+    }, app.config['SECRET_KEY'], algorithm="HS256")
+
+    return jsonify({'token': token})
 
 #### CRUD
 @app.route("/todos", methods=["POST"])
-def add_todo():
+@token_required
+def add_todo(current_user):
     data = request.get_json()
     title = data['title']
     desc  = data['description']
 
     if not title or not desc:
         return jsonify({ 'message': 'title and description are required'}), 400
-    new_todo = Todo(title=title, description=desc)
+    new_todo = Todo(title=title, description=desc, owner=current_user)
     db_session.add(new_todo)
     db_session.commit()
-    return jsonify({ 'message': 'todo created successfully', 'todo_title':new_todo.title}), 201
+
+    return jsonify({ 'id':new_todo.id, 'title':new_todo.title, 'description': new_todo.description}), 201
 
 @app.route("/todos/<int:todo_id>", methods=["PUT"])
-def update_todo(todo_id):
+@token_required
+def update_todo(current_user, todo_id):
     data = request.get_json()
     title = data['title']
     desc = data['description']
@@ -73,17 +118,24 @@ def update_todo(todo_id):
     if not todo:
         return jsonify({'message': 'todo does not exist'})
 
+    if current_user != todo.owner:
+        return jsonify({'message': 'Forbidden'})
+
     todo.title = title if title else todo.title
     todo.description = desc if desc else todo.description
     db_session.commit()    
 
-    return jsonify({'message': 'todo updated successfully', 'todo_title':todo.title, 'todo_desc':todo.description}), 200
+    return jsonify({'id': todo.id, 'title':todo.title, 'description':todo.description}), 200
 
 @app.route("/todos/<int:todo_id>", methods=["DELETE"])
-def delete_todo(todo_id):
+@token_required
+def delete_todo(current_user, todo_id):
     todo = Todo.query.get(todo_id)
     if not todo:
         return jsonify({'message': 'todo does not exist'}), 400
+
+    if current_user != todo.owner:
+        return jsonify({'message': 'Forbidden'})
 
     db_session.delete(todo)
     db_session.commit()
@@ -92,8 +144,9 @@ def delete_todo(todo_id):
     
 
 @app.route("/todos", methods=["GET"])
-def get_todos():
-    todos = Todo.query.all()
+@token_required
+def get_todos(current_user):
+    todos = Todo.query.filter_by(owner=current_user).all()
     return jsonify([{'id':todo.id, 'title':todo.title, 'description':todo.description} for todo in todos])
 
 
