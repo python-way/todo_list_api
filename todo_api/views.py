@@ -149,8 +149,16 @@ def get_todos(current_user):
     todos = Todo.query.filter_by(owner=current_user).all()
     return jsonify([{'id':todo.id, 'title':todo.title, 'description':todo.description} for todo in todos])
 
-
-
+@app.route("/todos/<int:page>/<int:limit>", methods=["GET"])
+@token_required
+def get_paged_todos(current_user, page, limit):
+    todos = Todo.query.filter_by(owner=current_user).all()
+    if page >= 1 and limit >= 1:
+        start = (page - 1) * limit
+        end = start + limit
+        todos = todos[start:end]
+        return jsonify([{'id':todo.id, 'title':todo.title, 'description':todo.description} for todo in todos])
+    return jsonify([{'id':todo.id, 'title':todo.title, 'description':todo.description} for todo in todos])
 
 
 @app.teardown_appcontext
