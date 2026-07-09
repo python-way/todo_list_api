@@ -6,11 +6,14 @@ from flask import jsonify, request
 
 from werkzeug.security import generate_password_hash, check_password_hash
 from functools import wraps
+import os 
 import jwt
 import datetime
+from dotenv import load_dotenv
 
-app.config['SECRET_KEY'] = 'your_secret_key_here'
+load_dotenv()
 
+app.config['SECRET_KEY'] = os.environ.get("SECRET_KEY")
 
 ## Authentication
 def token_required(f):
